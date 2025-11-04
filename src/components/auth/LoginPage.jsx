@@ -57,16 +57,10 @@ const LoginPage = ({ onLogin }) => {
     }
   }
 
-  // background image path: place `public/login-cat.svg` (or your image) and use a relative path
-  const bgUrl = 'login-cat.svg'
+  // background image temporarily removed to avoid 404 for login-cat.svg on Pages
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
-      <div className="absolute inset-0 overflow-hidden">
-        <img src={bgUrl} alt="background" className="w-full h-full object-cover opacity-30 dark:opacity-20" />
-        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-white/60 to-white/80 dark:from-transparent dark:via-gray-900/60 dark:to-gray-900/80" />
-      </div>
-
       <div className="relative z-10 w-full max-w-md p-8 bg-white dark:bg-gray-800 rounded-xl shadow-lg">
         <h1 className="text-2xl font-extrabold text-pink-600 mb-2">Mia Move</h1>
         <p className="text-sm text-gray-500 dark:text-gray-300 mb-6">Entre com sua conta para continuar</p>
