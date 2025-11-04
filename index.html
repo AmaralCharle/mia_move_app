@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mia Move - Frontend</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      // Apply theme early to avoid flash: read saved preference or system preference
+      (function() {
+        try {
+          var theme = localStorage.getItem('mia-move-theme');
+          if (theme === 'dark') document.documentElement.classList.add('dark');
+          else if (theme === 'light') document.documentElement.classList.remove('dark');
+          else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.classList.add('dark');
+        } catch (e) {}
+      })();
+    </script>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
