@@ -57,8 +57,8 @@ const LoginPage = ({ onLogin }) => {
     }
   }
 
-  // background image path: put your cat image at public/login-cat.jpg or set CSS to another URL
-  const bgUrl = '/login-cat.jpg'
+  // background image path: place `public/login-cat.svg` (or your image) and use a relative path
+  const bgUrl = 'login-cat.svg'
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
