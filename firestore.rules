@@ -1,26 +1,45 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Função para verificar se o usuário autenticado é um dos UIDs de administrador.
-    // Adicione aqui os UIDs que devem ter acesso total ao app.
+    // Funções utilitárias
+    function getUserRole() {
+      return request.auth != null && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
+        : null;
+    }
+
     function isMasterAdmin() {
       return request.auth != null && (
-        request.auth.uid == 'cnxflbD2BGMpc3CSIIZu5CQmSdW2' || // UID antigo de admin
-        request.auth.uid == 'aigcgUEpuTXJTht68Zzjzi9a8Pj1'   // seu UID atual (usemiamove@gmail.com)
+        request.auth.uid == 'cnxflbD2BGMpc3CSIIZu5CQmSdW2' ||
+        request.auth.uid == 'aigcgUEpuTXJTht68Zzjzi9a8Pj1'
       );
     }
 
-    // Permite leitura/escrita nas coleções usadas pela aplicação para o administrador.
-    match /{collection=products|sales|customers|defectiveItems|expenses|goals|categories}/{docId} {
-      allow read, write: if isMasterAdmin();
+    // Regras para coleções do app: verificamos o nome da coleção via a variável 'collection'
+    match /{collection}/{docId} {
+      allow read, write: if isMasterAdmin() && (
+        collection == 'products' || collection == 'sales' || collection == 'customers' ||
+        collection == 'defectiveItems' || collection == 'expenses' || collection == 'goals' ||
+        collection == 'categories'
+      );
     }
 
-    // Mantemos também a rota 'artifacts' caso você precise dela em paralelo.
+    // artifacts (mantemos compatibilidade com uso anterior)
     match /artifacts/{appId}/{document=**} {
-      allow read, write: if isMasterAdmin();
+      allow read, write: if isMasterAdmin() || (request.auth != null && getUserRole() == 'admin');
     }
 
-    // Fallback seguro (nega tudo nas demais coleções)
+    // Regras para a coleção users
+    match /users/{userId} {
+      allow read: if request.auth != null && (request.auth.uid == userId || getUserRole() == 'admin' || isMasterAdmin());
+      allow create: if request.auth != null && request.auth.uid == userId;
+      allow update: if request.auth != null && (
+        getUserRole() == 'admin' || (request.auth.uid == userId && request.resource.data.role == resource.data.role)
+      );
+      allow delete: if request.auth != null && (getUserRole() == 'admin' || isMasterAdmin());
+    }
+
+    // Fallback padrão: negar tudo
     match /{path=**} {
       allow read, write: if false;
     }
