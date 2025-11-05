@@ -1,0 +1,25 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Permite que qualquer usuário autenticado crie seu próprio documento de perfil
+    match /users/{userId} {
+      allow create: if request.auth != null && request.auth.uid == userId;
+      allow read, update, delete: if request.auth != null && (
+        request.auth.uid == userId ||
+        // usuário com role == 'master' pode gerenciar todos
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'master'
+      );
+    }
+
+    // Coleções principais do app — somente master pode ler/escrever
+    match /{collection=products|sales|customers|defectiveItems|expenses|goals|categories}/{docId} {
+      allow read, write: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'master';
+    }
+
+    // Fallback seguro (nega tudo)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
