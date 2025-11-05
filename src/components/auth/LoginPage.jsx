@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { signInWithEmailAndPassword, signOut } from 'firebase/auth'
+import { signInWithEmailAndPassword, signOut, setPersistence, browserSessionPersistence, inMemoryPersistence, browserLocalPersistence } from 'firebase/auth'
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore'
 import { auth, db } from '../../firebase/firebaseClient'
 
@@ -7,6 +7,7 @@ const LoginPage = ({ onLogin }) => {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
+  const [remember, setRemember] = useState(false)
 
   const MASTER_EMAIL = 'usemiamove@gmail.com'
 
@@ -15,6 +16,12 @@ const LoginPage = ({ onLogin }) => {
     if (!email.trim() || !password.trim()) return alert('Preencha email e senha')
     setLoading(true)
     try {
+      // set persistence according to "remember" checkbox
+      try {
+        await setPersistence(auth, remember ? browserLocalPersistence : browserSessionPersistence)
+      } catch (pErr) {
+        console.warn('setPersistence failed', pErr)
+      }
       const res = await signInWithEmailAndPassword(auth, email.trim(), password)
       const user = res.user
       // fetch users/{uid} doc to check role
@@ -76,14 +83,14 @@ const LoginPage = ({ onLogin }) => {
           </div>
 
           <div className="flex items-center justify-between">
-            <label className="flex items-center text-sm"><input type="checkbox" className="mr-2" /> Lembrar</label>
+            <label className="flex items-center text-sm"><input type="checkbox" checked={remember} onChange={e=>setRemember(e.target.checked)} className="mr-2" /> Lembrar</label>
             <a className="text-sm text-pink-600 hover:underline" href="#">Esqueci a senha</a>
           </div>
 
           <button disabled={loading} type="submit" className="w-full py-3 bg-pink-500 text-white font-bold rounded-lg">{loading ? 'Entrando...' : 'Entrar'}</button>
         </form>
 
-        <p className="text-sm text-center text-gray-500 mt-4">Ou cole a sessão principal no modal de Sincronização para puxar os dados.</p>
+  {/* footer note removed as requested */}
       </div>
     </div>
   )

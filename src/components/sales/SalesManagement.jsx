@@ -84,22 +84,51 @@ const SalesManagement = ({ db, userId, products = [], sales = [], customers = []
         // Firestore flow: create sale doc, decrement product variant stock (batch) and record stockMovements
         try {
           const salesRef = collection(db, getUserCollectionPath(userId, 'sales'))
+          // attempt to link or create a customer record when a customer name is provided
+          let customerId = null
+          try {
+            if (customerName && customerName.trim()) {
+              const normalizedName = customerName.trim().toLowerCase()
+              const existing = (customers || []).find(c => (c.whatsapp && c.whatsapp === (customerWhatsapp || '')) || (c.name && c.name.toLowerCase() === normalizedName))
+              if (existing) {
+                customerId = existing.id
+              } else {
+                // create a simple customer doc
+                const customersRef = collection(db, getUserCollectionPath(userId, 'customers'))
+                const custRef = await addDoc(customersRef, { name: customerName.trim(), whatsapp: customerWhatsapp || '', createdAt: Timestamp.now(), updatedAt: Timestamp.now() })
+                customerId = custRef.id
+              }
+            }
+          } catch (cErr) {
+            console.error('Erro ao localizar/crear cliente:', cErr)
+            // non-blocking — continue saving the sale without customerId
+          }
+
+          // compute derived fields expected by reports: date, totalAmount and profit
+          const profit = (subtotal - costOfGoodsSold) - totalDiscount - feeAmount
+          const nowTs = Timestamp.now()
           const saleData = {
             items: selectedItems,
             subtotal,
+            costOfGoodsSold,
             discountPercentage,
             totalDiscount,
             feeAmount,
             finalTotal,
+            // canonical fields used across reports
+            totalAmount: finalTotal,
+            profit: profit,
+            date: nowTs,
             paymentMethod,
             paymentStatus,
             dueDate: paymentStatus === 'a_receber' && dueDate ? Timestamp.fromDate(new Date(dueDate)) : null,
+            customerId: customerId || null,
             customerName,
             customerWhatsapp,
             saleNotes,
             installments,
-            createdAt: Timestamp.now(),
-            updatedAt: Timestamp.now()
+            createdAt: nowTs,
+            updatedAt: nowTs
           }
           const saleRef = await addDoc(salesRef, saleData)
 
@@ -139,6 +168,8 @@ const SalesManagement = ({ db, userId, products = [], sales = [], customers = []
           // commit batch
           await batch.commit()
           showToast(`Venda registrada: ${formatCurrency(finalTotal)}`, 'success')
+          // notify app to refresh products immediately (best-effort) in case realtime listener delays
+          try { window.dispatchEvent(new CustomEvent('mia:products-updated', { detail: { userId } })) } catch (e) { console.warn('dispatch mia:products-updated failed', e) }
           // reset form
           setSelectedItems([]); setDiscountPercentage(0); setPaymentMethod('Cartão de Crédito'); setPaymentStatus('recebido'); setDueDate(''); setCustomerName(''); setSaleNotes(''); setCreditCardFee(0); setInstallments(1); setCustomerWhatsapp('')
         } catch (err) {

@@ -1,8 +1,9 @@
 import React, { useState, useMemo } from 'react'
-import { collection, doc, getDoc, getDocs, updateDoc } from 'firebase/firestore'
+import { collection, doc, getDoc, getDocs, updateDoc, writeBatch } from 'firebase/firestore'
 import CustomModal from '../ui/CustomModal'
 import { getUserCollectionPath } from '../../utils/paths'
 import { formatCurrency, getStartOfDay } from '../../utils/format'
+import { toJSDate } from '../../utils/dates'
 
 const cardStyle = 'bg-white dark:bg-gray-800 p-4 sm:p-6 rounded-xl shadow-lg dark:border dark:border-gray-700'
 const inputStyle = 'w-full p-3 border border-gray-300 rounded-lg bg-white dark:bg-gray-700 dark:border-gray-600 dark:text-gray-50'
@@ -31,8 +32,8 @@ const ProfitTrendChart = ({ sales = [], expenses = [], dateRange = {} }) => {
     const dailyData = new Map();
     const dayCursor = new Date(dateRange.start);
     while (dayCursor <= dateRange.end) { dailyData.set(dayCursor.toISOString().split('T')[0], 0); dayCursor.setDate(dayCursor.getDate() + 1); }
-    (sales || []).filter(s => s.status !== 'estornada').forEach(s => { const day = s.date.toDate().toISOString().split('T')[0]; if (dailyData.has(day)) dailyData.set(day, dailyData.get(day) + (s.profit || 0)); });
-    (expenses || []).forEach(e => { if (e.status !== 'pago') return; const day = e.date.toDate().toISOString().split('T')[0]; if (dailyData.has(day)) dailyData.set(day, dailyData.get(day) - e.amount); });
+  (sales || []).filter(s => s.status !== 'estornada').forEach(s => { const d = toJSDate(s.date); if (!d) return; const day = d.toISOString().split('T')[0]; if (dailyData.has(day)) dailyData.set(day, dailyData.get(day) + (s.profit || 0)); });
+  (expenses || []).forEach(e => { if (e.status !== 'pago') return; const d = toJSDate(e.date); if (!d) return; const day = d.toISOString().split('T')[0]; if (dailyData.has(day)) dailyData.set(day, dailyData.get(day) - e.amount); });
     let cumulative = 0; return Array.from(dailyData.values()).map(v => (cumulative += v, cumulative));
   }, [sales, expenses, dateRange]);
   if (trendData.length === 0) return <p className="text-center">Selecione um período para ver a tendência.</p>;
@@ -47,6 +48,9 @@ const Reports = ({ sales = [], products = [], expenses = [], db, userId, showToa
   const [timeFilter, setTimeFilter] = useState('month');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [isClearModalOpen, setIsClearModalOpen] = useState(false)
+  const [collectionsToClear, setCollectionsToClear] = useState({ sales: true, stockMovements: true, expenses: true, goals: false, defectiveItems: false })
+  const [isClearing, setIsClearing] = useState(false)
 
   const { filteredSales, filteredExpenses, dateRange } = useMemo(() => {
     const now = new Date(); let start, end = new Date(); end.setHours(23,59,59,999);
@@ -54,7 +58,7 @@ const Reports = ({ sales = [], products = [], expenses = [], db, userId, showToa
     else if (timeFilter === '30days') { start = new Date(); start.setDate(now.getDate() - 30); start = getStartOfDay(start); }
     else if (timeFilter === 'month') { start = getStartOfDay(new Date(now.getFullYear(), now.getMonth(), 1)); }
     else if (timeFilter === 'year') { start = getStartOfDay(new Date(now.getFullYear(), 0, 1)); } else { start = null; }
-    const filterByDate = (items, sourceSales = false) => { if (!start) return items; return items.filter(i => { const itemDate = i.date && i.date.toDate ? i.date.toDate() : new Date(i.date); return itemDate >= start && itemDate <= end; }); };
+  const filterByDate = (items, sourceSales = false) => { if (!start) return items; return items.filter(i => { const itemDate = toJSDate(i.date); if (!itemDate) return false; return itemDate >= start && itemDate <= end; }); };
     return { filteredSales: filterByDate(sales, true), filteredExpenses: filterByDate(expenses), dateRange: { start, end } };
   }, [sales, expenses, timeFilter, startDate, endDate]);
 
@@ -71,8 +75,8 @@ const Reports = ({ sales = [], products = [], expenses = [], db, userId, showToa
     const currentMetrics = calculateMetrics(filteredSales, filteredExpenses);
     const prev = getPreviousPeriod(timeFilter);
     if (!prev) return { current: currentMetrics, changes: null };
-    const prevSales = (sales || []).filter(s => s.status !== 'estornada' && s.date && s.date.toDate ? s.date.toDate() >= prev.start && s.date.toDate() <= prev.end : false);
-    const prevExpenses = (expenses || []).filter(e => e.date && e.date.toDate ? e.date.toDate() >= prev.start && e.date.toDate() <= prev.end : false);
+  const prevSales = (sales || []).filter(s => s.status !== 'estornada' && (() => { const d = toJSDate(s.date); return d ? (d >= prev.start && d <= prev.end) : false })());
+  const prevExpenses = (expenses || []).filter(e => (() => { const d = toJSDate(e.date); return d ? (d >= prev.start && d <= prev.end) : false })());
     const previousMetrics = calculateMetrics(prevSales, prevExpenses);
     const calcChange = (c, p) => (p === 0 ? (c > 0 ? 100 : 0) : ((c - p) / p) * 100);
     const changes = { revenue: calcChange(currentMetrics.totalRevenue, previousMetrics.totalRevenue), netProfit: calcChange(currentMetrics.netProfit, previousMetrics.netProfit), salesCount: calcChange(currentMetrics.totalSalesCount, previousMetrics.totalSalesCount) };
@@ -100,16 +104,20 @@ const Reports = ({ sales = [], products = [], expenses = [], db, userId, showToa
   }, [filteredSales, products]);
 
   const slowMovingStock = useMemo(() => {
-    const lastSaleDateMap = new Map(); (sales || []).forEach(s => { const saleDate = s.date && s.date.toDate ? s.date.toDate() : new Date(); s.items.forEach(item => { if (!lastSaleDateMap.has(item.sku) || saleDate > lastSaleDateMap.get(item.sku)) lastSaleDateMap.set(item.sku, saleDate); }); });
+  const lastSaleDateMap = new Map(); (sales || []).forEach(s => { const saleDate = toJSDate(s.date) || new Date(); s.items.forEach(item => { if (!lastSaleDateMap.has(item.sku) || saleDate > lastSaleDateMap.get(item.sku)) lastSaleDateMap.set(item.sku, saleDate); }); });
     const threshold = 120; const thresholdDate = new Date(); thresholdDate.setDate(thresholdDate.getDate() - threshold);
-    const allVariants = (products || []).flatMap(p => (p.variants || []).filter(v=>v.quantity>0).map(v => ({ ...v, productName: p.name, createdAt: p.createdAt && p.createdAt.toDate ? p.createdAt.toDate() : null })));
+  const allVariants = (products || []).flatMap(p => (p.variants || []).filter(v=>v.quantity>0).map(v => ({ ...v, productName: p.name, createdAt: toJSDate(p.createdAt) })));
     return allVariants.map(variant => { const lastSale = lastSaleDateMap.get(variant.sku); const referenceDate = lastSale || variant.createdAt; const daysSinceLastActivity = referenceDate ? Math.floor((new Date() - referenceDate)/(1000*60*60*24)) : null; return { ...variant, lastSale, daysSinceLastActivity, referenceDate }; }).filter(v => v.referenceDate ? v.referenceDate < thresholdDate : false).sort((a,b)=>a.referenceDate - b.referenceDate);
   }, [sales, products]);
 
   const pendingReceivables = useMemo(() => {
     const receivables = [];
-    (sales || []).filter(s => s.paymentStatus === 'a_receber' && s.status !== 'estornada').forEach(sale => receivables.push({ id: `${sale.id}-0`, saleId: sale.id, installmentNumber: null, dueDate: sale.dueDate ? sale.dueDate.toDate() : sale.date.toDate(), customerName: sale.customerName || 'N/A', amount: sale.totalAmount }));
-    (sales || []).filter(s => s.paymentStatus === 'parcelado' && s.status !== 'estornada' && s.installmentsData).forEach(sale => sale.installmentsData.forEach(inst => { if (inst.status === 'a_receber') receivables.push({ id: `${sale.id}-${inst.number}`, saleId: sale.id, installmentNumber: inst.number, dueDate: inst.dueDate.toDate(), customerName: sale.customerName || 'N/A', amount: inst.amount, totalInstallments: sale.installments }); }));
+    (sales || []).filter(s => s.paymentStatus === 'a_receber' && s.status !== 'estornada').forEach(sale => {
+      const due = toJSDate(sale.dueDate) || toJSDate(sale.date);
+      if (!due) return;
+      receivables.push({ id: `${sale.id}-0`, saleId: sale.id, installmentNumber: null, dueDate: due, customerName: sale.customerName || 'N/A', amount: sale.totalAmount || sale.finalTotal || 0 });
+    });
+    (sales || []).filter(s => s.paymentStatus === 'parcelado' && s.status !== 'estornada' && s.installmentsData).forEach(sale => sale.installmentsData.forEach(inst => { if (inst.status === 'a_receber') { const due = toJSDate(inst.dueDate); if (!due) return; receivables.push({ id: `${sale.id}-${inst.number}`, saleId: sale.id, installmentNumber: inst.number, dueDate: due, customerName: sale.customerName || 'N/A', amount: inst.amount, totalInstallments: sale.installments }); } }));
     return receivables.sort((a,b)=>a.dueDate - b.dueDate);
   }, [sales]);
 
@@ -124,13 +132,63 @@ const Reports = ({ sales = [], products = [], expenses = [], db, userId, showToa
 
   const handleExportCSV = () => {
     const headers = ['Data','Tipo','Descrição','Valor','Status'];
-    const salesRows = (filteredSales || []).map(s => [s.date.toDate().toISOString(),'Venda',`Venda para ${s.customerName || 'N/A'}`,s.totalAmount,s.paymentStatus]);
-    const expensesRows = (filteredExpenses || []).map(e => [e.date.toDate().toISOString(),'Despesa',e.description,-e.amount,e.status]);
+    const salesRows = (filteredSales || []).map(s => { const d = toJSDate(s.date); return [(d && d.toISOString()) || '', 'Venda', `Venda para ${s.customerName || 'N/A'}`, s.totalAmount || s.finalTotal || 0, s.paymentStatus]; });
+    const expensesRows = (filteredExpenses || []).map(e => { const d = toJSDate(e.date); return [(d && d.toISOString()) || '', 'Despesa', e.description, -e.amount, e.status]; });
     const allRows = [...salesRows, ...expensesRows].sort((a,b)=>new Date(a[0]) - new Date(b[0]));
     const csv = [headers.join(','), ...allRows.map(r=>r.join(','))].join('\n');
     const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.setAttribute('download','relatorio_mia_move.csv'); document.body.appendChild(link); link.click(); document.body.removeChild(link); showToast('Exportação concluída!', 'success');
   };
+
+  const toggleCollection = (key) => setCollectionsToClear(prev => ({ ...prev, [key]: !prev[key] }))
+
+  const deleteCollectionDocs = async (collectionName) => {
+    if (!db || !userId) throw new Error('Firestore não configurado')
+    const colRef = collection(db, getUserCollectionPath(userId, collectionName))
+    const snaps = await getDocs(colRef)
+    const docs = snaps.docs
+    if (!docs || docs.length === 0) return 0
+    let deleted = 0
+    // delete in batches of 400
+    const batchSize = 400
+    for (let i = 0; i < docs.length; i += batchSize) {
+      const batch = writeBatch(db)
+      const chunk = docs.slice(i, i + batchSize)
+      chunk.forEach(d => batch.delete(doc(colRef, d.id)))
+      await batch.commit()
+      deleted += chunk.length
+    }
+    return deleted
+  }
+
+  const handleClearConfirm = async () => {
+    // Simple yes/no confirmation flow (called after user clicks "Sim, apagar")
+    setIsClearing(true)
+    try {
+      const toProcess = Object.keys(collectionsToClear).filter(k => collectionsToClear[k])
+      let totalDeleted = 0
+      for (const col of toProcess) {
+        showToast(`Limpando ${col}...`, 'info')
+        try {
+          const del = await deleteCollectionDocs(col)
+          totalDeleted += del
+          showToast(`${del} documentos removidos de ${col}`, 'success')
+        } catch (e) {
+          console.error('Erro limpando', col, e)
+          showToast(`Erro ao limpar ${col}`, 'error')
+        }
+      }
+      showToast(`Limpeza concluída. Total removido: ${totalDeleted}`, 'success')
+      // notify app to refresh data immediately
+      try { window.dispatchEvent(new CustomEvent('mia:reports-cleared', { detail: { userId } })) } catch (e) { /* ignore */ }
+      setIsClearModalOpen(false)
+    } catch (err) {
+      console.error('Erro na limpeza:', err)
+      showToast('Erro ao limpar relatórios.', 'error')
+    } finally {
+      setIsClearing(false)
+    }
+  }
 
   const renderComparison = (change) => { if (change === null || isNaN(change)) return <span className="text-xs text-gray-400">s/ comp.</span>; const isPositive = change >=0; const color = isPositive ? 'text-green-500' : 'text-red-500'; return <span className={`text-sm font-bold ${color}`}>{isPositive ? '▲' : '▼'} {Math.abs(change).toFixed(1)}%</span>; };
 
@@ -142,6 +200,7 @@ const Reports = ({ sales = [], products = [], expenses = [], db, userId, showToa
           <select value={timeFilter} onChange={e=>setTimeFilter(e.target.value)} className={inputStyle}>{filterOptions.map(o=> <option key={o.value} value={o.value}>{o.label}</option>)}</select>
           {timeFilter === 'custom' && (<><input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} className={inputStyle} /><input type="date" value={endDate} onChange={e=>setEndDate(e.target.value)} className={inputStyle} /></>)}
           <button onClick={handleExportCSV} className="px-4 py-3 bg-gray-200 rounded-lg">Exportar CSV</button>
+          <button onClick={() => setIsClearModalOpen(true)} className="px-4 py-3 bg-red-200 text-red-800 rounded-lg">Limpar Relatórios</button>
         </div>
       </div>
 
@@ -180,6 +239,26 @@ const Reports = ({ sales = [], products = [], expenses = [], db, userId, showToa
           </table>
         </div>
       </div>
+
+      <CustomModal isOpen={isClearModalOpen} onClose={() => setIsClearModalOpen(false)} title="Limpar Relatórios (permanente)" size="max-w-md"
+        actions={<>
+          <button onClick={() => setIsClearModalOpen(false)} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-full">Cancelar</button>
+          <button onClick={handleClearConfirm} disabled={isClearing} className={`px-4 py-2 text-white rounded-full ${isClearing ? 'bg-gray-400' : 'bg-red-600'}`}>{isClearing ? 'Limpando...' : 'Confirmar Limpeza'}</button>
+        </>}>
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">Selecione quais coleções deseja apagar permanentemente. Isso removerá documentos do Firestore e NÃO pode ser desfeito.</p>
+          <div className="space-y-2">
+            <label className="flex items-center"><input type="checkbox" checked={collectionsToClear.sales} onChange={() => toggleCollection('sales')} className="mr-2" /> Vendas (sales)</label>
+            <label className="flex items-center"><input type="checkbox" checked={collectionsToClear.stockMovements} onChange={() => toggleCollection('stockMovements')} className="mr-2" /> Movimentos de Estoque (stockMovements)</label>
+            <label className="flex items-center"><input type="checkbox" checked={collectionsToClear.expenses} onChange={() => toggleCollection('expenses')} className="mr-2" /> Despesas (expenses)</label>
+            <label className="flex items-center"><input type="checkbox" checked={collectionsToClear.goals} onChange={() => toggleCollection('goals')} className="mr-2" /> Metas (goals)</label>
+            <label className="flex items-center"><input type="checkbox" checked={collectionsToClear.defectiveItems} onChange={() => toggleCollection('defectiveItems')} className="mr-2" /> Itens Defeituosos (defectiveItems)</label>
+          </div>
+          <div>
+            <p className="text-sm text-red-600 font-semibold">Quer realmente apagar todo o relatório? Esta ação é permanente e irá remover vendas, movimentos de estoque, despesas, metas e itens defeituosos selecionados.</p>
+          </div>
+        </div>
+      </CustomModal>
 
       <div className="grid lg:grid-cols-3 gap-6 mt-6">
         <div className={`${cardStyle} lg:col-span-1`}>

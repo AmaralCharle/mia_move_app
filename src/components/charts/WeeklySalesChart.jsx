@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react'
 import { formatCurrency, getStartOfDay } from '../../utils/format'
+import { toJSDate } from '../../utils/dates'
 
 const WeeklySalesChart = ({ sales }) => {
   const weeklyData = useMemo(() => {
@@ -13,9 +14,11 @@ const WeeklySalesChart = ({ sales }) => {
     }
 
     (sales || []).filter(s => s.status !== 'estornada').forEach(sale => {
-      const saleDate = getStartOfDay(sale.date.toDate())
+      const sd = toJSDate(sale.date)
+      if (!sd) return
+      const saleDate = getStartOfDay(sd)
       const dayData = data.find(d => d.date.getTime() === saleDate.getTime())
-      if (dayData) dayData.revenue += sale.totalAmount
+      if (dayData) dayData.revenue += sale.totalAmount || sale.finalTotal || 0
     })
 
     return data

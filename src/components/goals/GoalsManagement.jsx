@@ -3,6 +3,7 @@ import CustomModal from '../ui/CustomModal'
 import { collection, doc, setDoc, Timestamp } from 'firebase/firestore'
 import { getUserCollectionPath } from '../../utils/paths'
 import { formatCurrency, formatNumber, getStartOfDay } from '../../utils/format'
+import { toJSDate } from '../../utils/dates'
 
 const cardStyle = 'bg-white dark:bg-gray-800 p-4 sm:p-6 rounded-xl shadow-lg dark:border dark:border-gray-700'
 const primaryColor = 'bg-pink-500 hover:bg-pink-600'
@@ -19,30 +20,30 @@ const GoalPacingChart = ({ goal, sales, expenses, goalTypes }) => {
     const idealDailyValue = goal.amount / daysInMonth;
     const idealPath = Array.from({length: daysInMonth}, (_, i) => idealDailyValue * (i + 1));
 
-    const monthSales = (sales || []).filter(s => s.date && s.date.toDate && s.date.toDate().getMonth() === month && s.date.toDate().getFullYear() === year && s.status !== 'estornada');
-    const monthExpenses = (expenses || []).filter(e => e.date && e.date.toDate && e.date.toDate().getMonth() === month && e.date.toDate().getFullYear() === year && e.status === 'pago');
+  const monthSales = (sales || []).filter(s => { const d = toJSDate(s.date); return d ? (d.getMonth() === month && d.getFullYear() === year && s.status !== 'estornada') : false });
+  const monthExpenses = (expenses || []).filter(e => { const d = toJSDate(e.date); return d ? (d.getMonth() === month && d.getFullYear() === year && e.status === 'pago') : false });
 
     const dailyValues = Array(daysInMonth).fill(0);
     switch(goal.type) {
       case 'revenue':
       case 'averageTicket':
-        monthSales.forEach(s => { dailyValues[s.date.toDate().getDate() - 1] += s.totalAmount; });
+  monthSales.forEach(s => { const d = toJSDate(s.date); if (!d) return; dailyValues[d.getDate() - 1] += s.totalAmount || s.finalTotal || 0; });
         break;
       case 'netProfit':
-        monthSales.forEach(s => { dailyValues[s.date.toDate().getDate() - 1] += s.profit || 0; });
-        monthExpenses.forEach(e => { dailyValues[e.date.toDate().getDate() - 1] -= e.amount; });
+  monthSales.forEach(s => { const d = toJSDate(s.date); if (!d) return; dailyValues[d.getDate() - 1] += s.profit || 0; });
+  monthExpenses.forEach(e => { const d = toJSDate(e.date); if (!d) return; dailyValues[d.getDate() - 1] -= e.amount; });
         break;
       case 'salesCount':
-        monthSales.forEach(s => { dailyValues[s.date.toDate().getDate() - 1] += 1; });
+  monthSales.forEach(s => { const d = toJSDate(s.date); if (!d) return; dailyValues[d.getDate() - 1] += 1; });
         break;
       case 'itemsSold':
-        monthSales.forEach(s => { const idx = s.date.toDate().getDate() - 1; dailyValues[idx] += s.items.reduce((sum,i)=>sum+i.quantity,0); });
+  monthSales.forEach(s => { const d = toJSDate(s.date); if (!d) return; const idx = d.getDate() - 1; dailyValues[idx] += s.items.reduce((sum,i)=>sum+i.quantity,0); });
         break;
       default: break;
     }
 
-    let sum = 0;
-    const actualPath = dailyValues.map((v, i) => { sum += v; if (goal.type === 'averageTicket') { const salesUpToDay = monthSales.filter(s => s.date.toDate().getDate() <= i + 1); return salesUpToDay.length > 0 ? sum / salesUpToDay.length : 0 } return sum; });
+  let sum = 0;
+  const actualPath = dailyValues.map((v, i) => { sum += v; if (goal.type === 'averageTicket') { const salesUpToDay = monthSales.filter(s => { const d = toJSDate(s.date); return d ? d.getDate() <= i + 1 : false }); return salesUpToDay.length > 0 ? sum / salesUpToDay.length : 0 } return sum; });
 
     return { idealPath, actualPath, daysInMonth, today };
   }, [goal, sales, expenses]);
@@ -100,8 +101,8 @@ const GoalsManagement = ({ db, userId, sales = [], expenses = [], allGoals = [],
     const [year, month] = goal.id.split('-').map(Number);
     const startOfMonth = new Date(year, month - 1, 1);
     const endOfMonth = new Date(year, month, 0, 23, 59, 59);
-    const monthSales = (allSales || []).filter(s => { const sd = s.date && s.date.toDate ? s.date.toDate() : new Date(s.date); return sd >= startOfMonth && sd <= endOfMonth && s.status !== 'estornada'; });
-    const monthExpenses = (allExpenses || []).filter(e => { const ed = e.date && e.date.toDate ? e.date.toDate() : new Date(e.date); return ed >= startOfMonth && ed <= endOfMonth && e.status === 'pago'; });
+  const monthSales = (allSales || []).filter(s => { const sd = toJSDate(s.date); return sd ? (sd >= startOfMonth && sd <= endOfMonth && s.status !== 'estornada') : false; });
+  const monthExpenses = (allExpenses || []).filter(e => { const ed = toJSDate(e.date); return ed ? (ed >= startOfMonth && ed <= endOfMonth && e.status === 'pago') : false; });
     let achievedValue = 0; const totalRevenue = monthSales.reduce((sum,s)=>sum + s.totalAmount,0);
     switch(goal.type) { case 'revenue': achievedValue = totalRevenue; break; case 'netProfit': const grossProfit = monthSales.reduce((sum,s)=>sum + (s.profit||0),0); const totalExpenses = monthExpenses.reduce((sum,e)=>sum + e.amount,0); achievedValue = grossProfit - totalExpenses; break; case 'salesCount': achievedValue = monthSales.length; break; case 'itemsSold': achievedValue = monthSales.reduce((sum,s)=>sum + s.items.reduce((iSum,i)=>iSum + i.quantity,0),0); break; case 'averageTicket': achievedValue = monthSales.length > 0 ? totalRevenue / monthSales.length : 0; break; default: achievedValue = 0; }
     const percentage = goal.amount > 0 ? (achievedValue / goal.amount) * 100 : 0;

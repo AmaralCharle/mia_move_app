@@ -28,7 +28,6 @@ const StockManagement = ({ db, userId, products = [], showToast = () => {}, cate
   const [variantMovements, setVariantMovements] = useState([])
   const [categoryFilter, setCategoryFilter] = useState('all')
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false)
-  const [categoriesList, setCategoriesList] = useState(categories || [])
   const [newCategoryName, setNewCategoryName] = useState('')
 
   const [formData, setFormData] = useState({ name: '', categoryId: '', variants: [newVariantTemplate] })
@@ -44,9 +43,9 @@ const StockManagement = ({ db, userId, products = [], showToast = () => {}, cate
     }
   }, [editingProduct])
 
-  useEffect(() => {
-    setCategoriesList(categories || [])
-  }, [categories])
+  // categories are provided by the parent (App) via props and come from a realtime onSnapshot.
+  // Use the `categories` prop as the single source of truth to avoid duplicated entries caused
+  // by optimistic local updates + snapshot updates.
 
   const handleBaseChange = (e) => setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }))
 
@@ -214,9 +213,8 @@ const StockManagement = ({ db, userId, products = [], showToast = () => {}, cate
     }
     try {
       const colRef = collection(db, getUserCollectionPath(userId, 'categories'))
-      const docRef = await addDoc(colRef, { name, createdAt: Timestamp.now() })
-      const added = { id: docRef.id, name }
-      setCategoriesList(prev => [...prev, added])
+  await addDoc(colRef, { name, createdAt: Timestamp.now() })
+  // rely on parent App onSnapshot to update `categories` prop — do not mutate local state here
       setNewCategoryName('')
       showToast('Categoria adicionada!', 'success')
     } catch (error) {
@@ -232,8 +230,8 @@ const StockManagement = ({ db, userId, products = [], showToast = () => {}, cate
       return
     }
     try {
-      await deleteDoc(doc(db, getUserCollectionPath(userId, 'categories'), cat.id))
-      setCategoriesList(prev => prev.filter(c => c.id !== cat.id))
+  await deleteDoc(doc(db, getUserCollectionPath(userId, 'categories'), cat.id))
+  // parent onSnapshot will update the categories prop accordingly
       showToast('Categoria removida!', 'success')
     } catch (error) {
       console.error('Erro ao deletar categoria', error)
@@ -242,8 +240,8 @@ const StockManagement = ({ db, userId, products = [], showToast = () => {}, cate
   }
 
   const allVariants = useMemo(() => {
-    return (products || []).filter(p => categoryFilter === 'all' || p.categoryId === categoryFilter).flatMap(p => (p.variants || []).map(v => ({ ...v, productId: p.id, productName: p.name, category: categoriesList.find(c => c.id === p.categoryId)?.name || 'Sem Categoria' })))
-  }, [products, categoriesList, categoryFilter])
+    return (products || []).filter(p => categoryFilter === 'all' || p.categoryId === categoryFilter).flatMap(p => (p.variants || []).map(v => ({ ...v, quantity: parseInt(v.quantity, 10) || 0, productId: p.id, productName: p.name, category: (categories || []).find(c => c.id === p.categoryId)?.name || 'Sem Categoria' })))
+  }, [products, categories, categoryFilter])
 
   const lowStockVariants = useMemo(() => allVariants.filter(v => v.quantity < 5), [allVariants])
 
@@ -254,14 +252,14 @@ const StockManagement = ({ db, userId, products = [], showToast = () => {}, cate
         <div className="flex items-center space-x-2 mt-4 md:mt-0">
           <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className={inputStyle + ' max-w-xs'}>
             <option value="all">Todas as Categorias</option>
-            {categoriesList.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {(categories || []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
           <button onClick={() => setIsCategoryModalOpen(true)} className="px-4 py-3 text-pink-600 dark:text-pink-300 font-semibold bg-pink-100 dark:bg-pink-900/40 rounded-lg hover:bg-pink-200 dark:hover:bg-pink-900/60 whitespace-nowrap">Gerenciar Categorias</button>
           <button onClick={() => openModal()} className={`px-4 py-3 text-white font-semibold rounded-lg ${primaryColor} shadow-md whitespace-nowrap`}>+ Novo Produto</button>
         </div>
       </div>
 
-      <StockLevelChart variants={allVariants} />
+      <StockLevelChart variants={allVariants} db={db} userId={userId} />
 
       {lowStockVariants.length > 0 && (
         <div className="bg-orange-100 dark:bg-orange-900/40 border-l-4 border-orange-500 p-4 rounded-xl shadow-md"><p className="font-bold text-orange-800 dark:text-orange-200">⚠️ {lowStockVariants.length} Variaçõe(s) com Estoque Baixo!</p></div>
@@ -318,7 +316,7 @@ const StockManagement = ({ db, userId, products = [], showToast = () => {}, cate
             </div>
             <div>
               <label className="block text-sm font-medium">Categoria:</label>
-              <select name="categoryId" value={formData.categoryId} onChange={handleBaseChange} className={inputStyle}><option value="">Selecione uma categoria</option>{categoriesList.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+              <select name="categoryId" value={formData.categoryId} onChange={handleBaseChange} className={inputStyle}><option value="">Selecione uma categoria</option>{(categories || []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
             </div>
           </div>
 
@@ -374,8 +372,8 @@ const StockManagement = ({ db, userId, products = [], showToast = () => {}, cate
         <div className="space-y-4">
           <input type="text" placeholder="Nome da nova categoria" value={newCategoryName} onChange={(e) => setNewCategoryName(e.target.value)} className={inputStyle} />
           <div className="space-y-2">
-            {categoriesList.length === 0 && <p className="text-gray-500">Nenhuma categoria cadastrada.</p>}
-            {categoriesList.map(cat => (
+            {(categories || []).length === 0 && <p className="text-gray-500">Nenhuma categoria cadastrada.</p>}
+            {(categories || []).map(cat => (
               <div key={cat.id} className="flex justify-between items-center p-2 bg-gray-50 dark:bg-gray-700/50 rounded">
                 <div className="text-sm">{cat.name}</div>
                 <div className="space-x-2">

@@ -1,5 +1,6 @@
 import React from 'react'
 import CustomModal from '../ui/CustomModal'
+import { toJSDate } from '../../utils/dates'
 
 const StockHistoryModal = ({ isOpen, onClose, variant, movements = [] }) => {
   const getTypeLabel = (type) => {
@@ -29,7 +30,7 @@ const StockHistoryModal = ({ isOpen, onClose, variant, movements = [] }) => {
           <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
             {movements.map((mov, index) => (
               <tr key={index}>
-                <td className="px-3 py-4 text-sm">{mov.date.toDate().toLocaleString('pt-BR')}</td>
+                <td className="px-3 py-4 text-sm">{(toJSDate(mov.date) && toJSDate(mov.date).toLocaleString('pt-BR')) || ''}</td>
                 <td className="px-3 py-4 text-sm">{getTypeLabel(mov.type)}</td>
                 <td className={`px-3 py-4 text-sm font-bold ${mov.type === 'ajuste_entrada' || mov.type === 'estorno' ? 'text-green-600' : 'text-red-600'}`}>{mov.type === 'ajuste_entrada' || mov.type === 'estorno' ? `+${mov.quantityChange}` : `-${mov.quantityChange}`}</td>
                 <td className="px-3 py-4 text-sm font-bold">{mov.newQuantity}</td>

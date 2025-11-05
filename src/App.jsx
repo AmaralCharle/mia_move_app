@@ -1,7 +1,7 @@
 import React, { useState, useLayoutEffect, useCallback, useEffect } from 'react'
 import { db, firebaseConfig, auth } from './firebase/firebaseClient'
-import { onAuthStateChanged, signOut as firebaseSignOut } from 'firebase/auth'
-import { collection, query, orderBy, onSnapshot } from 'firebase/firestore'
+import { onAuthStateChanged, signOut as firebaseSignOut, setPersistence, browserSessionPersistence } from 'firebase/auth'
+import { collection, query, orderBy, onSnapshot, getDocs } from 'firebase/firestore'
 import { getUserCollectionPath } from './utils/paths'
 import SyncModal from './components/sync/SyncModal'
 import Toast from './components/ui/Toast'
@@ -136,6 +136,18 @@ const App = () => {
     return () => unsub()
   }, [hasDb])
 
+  // Make auth use session persistence (so closing the tab ends the session)
+  useEffect(() => {
+    if (!hasDb || !auth) return
+    try {
+      setPersistence(auth, browserSessionPersistence).catch(e => { console.warn('setPersistence failed', e) })
+    } catch (e) {}
+
+    // NOTE: do NOT sign out on beforeunload — using browserSessionPersistence
+    // will keep the session across reloads and clear it when the tab is closed.
+    return () => {}
+  }, [hasDb])
+
   // realtime listeners for Firestore collections for the authenticated user
   const [products, setProducts] = useState([])
   const [sales, setSales] = useState([])
@@ -166,6 +178,32 @@ const App = () => {
     }
 
     listen('products', setProducts)
+
+    // In some edge cases the realtime onSnapshot may delay; listen for a manual refresh event
+    let refreshTimeout = null
+    const handleProductsRefresh = async (e) => {
+      try {
+        const colRef = collection(db, getUserCollectionPath(uid, 'products'))
+        const snaps = await getDocs(colRef)
+        const arr = snaps.docs.map(d => ({ id: d.id, ...d.data() }))
+        setProducts(arr)
+      } catch (err) {
+        console.error('products refresh failed', err)
+      }
+      // schedule a retry fetch after a short delay to handle eventual consistency / snapshot latency
+      try {
+        if (refreshTimeout) clearTimeout(refreshTimeout)
+      } catch (e) {}
+      refreshTimeout = setTimeout(async () => {
+        try {
+          const colRef2 = collection(db, getUserCollectionPath(uid, 'products'))
+          const snaps2 = await getDocs(colRef2)
+          const arr2 = snaps2.docs.map(d => ({ id: d.id, ...d.data() }))
+          setProducts(arr2)
+        } catch (err) { console.error('products retry refresh failed', err) }
+      }, 1500)
+    }
+    window.addEventListener('mia:products-updated', handleProductsRefresh)
     listen('sales', setSales)
     listen('defectiveItems', setDefectiveItems)
     listen('expenses', setExpenses)
@@ -173,7 +211,7 @@ const App = () => {
     listen('categories', setCategories)
     listen('goals', setGoals, false)
 
-    return () => unsubscribes.forEach(u => u())
+  return () => { unsubscribes.forEach(u => u()); window.removeEventListener('mia:products-updated', handleProductsRefresh); try { if (refreshTimeout) clearTimeout(refreshTimeout) } catch(e) {} }
   }, [hasDb, currentUser])
 
   // demo event listeners removed
@@ -192,10 +230,7 @@ const App = () => {
             {/* small nav or tagline could go here */}
           </div>
           <div className="flex items-center space-x-3 sm:space-x-4">
-            <button onClick={() => setIsSyncModalOpen(true)} title="Sincronizar" className="p-2 rounded-full bg-gray-200 dark:bg-gray-700 text-pink-600 dark:text-pink-300 hover:bg-gray-300 dark:hover:bg-gray-600">
-              {/* device sync icon */}
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V8a4 4 0 014-4h6m1 12v2a2 2 0 01-2 2H9a2 2 0 01-2-2v-2m8-8l3 3m0 0l-3 3m3-3H3" /></svg>
-            </button>
+            {/* botão Sincronizar removido conforme solicitado */}
 
             <button onClick={() => setTheme(t => (t === 'light' ? 'dark' : 'light'))} title="Alternar tema" className="p-2 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600">
               {/* sun / moon icon */}

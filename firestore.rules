@@ -3,9 +3,14 @@ service cloud.firestore {
   match /databases/{database}/documents {
     // Funções utilitárias
     function getUserRole() {
-      return request.auth != null && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
-        : null;
+      // users docs may live under root /users or under the artifacts path used by the app.
+      if (request.auth == null) { return null }
+      // prefer artifact-scoped users collection used by the app
+      let appPath = '/databases/' + database + '/documents/artifacts/mia-move-app/users/' + request.auth.uid
+      if (exists(appPath)) { return get(appPath).data.role }
+      let rootPath = '/databases/' + database + '/documents/users/' + request.auth.uid
+      if (exists(rootPath)) { return get(rootPath).data.role }
+      return null
     }
 
     function isMasterAdmin() {

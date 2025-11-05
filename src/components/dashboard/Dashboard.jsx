@@ -3,6 +3,7 @@ import WeeklySalesChart from '../charts/WeeklySalesChart'
 import PaymentDistributionChart from '../charts/PaymentDistributionChart'
 import GoalProgressBar from '../charts/GoalProgressBar'
 import { formatCurrency } from '../../utils/format'
+import { toJSDate } from '../../utils/dates'
 
 const primaryColor = 'bg-pink-500 hover:bg-pink-600'
 const secondaryColor = 'bg-teal-500 hover:bg-teal-600'
@@ -13,8 +14,8 @@ const Dashboard = ({ sales = [], expenses = [], products = [], monthlyGoal = nul
   const today = new Date(); today.setHours(0,0,0,0)
 
   const { todayRevenue, todayNetProfit } = useMemo(() => {
-    const todaySales = sales.filter(s => s.date.toDate() >= today && s.status !== 'estornada')
-    const todayExpenses = expenses.filter(e => e.date.toDate() >= today && e.status === 'pago')
+  const todaySales = (sales || []).filter(s => { const d = toJSDate(s.date); return d ? (d >= today && s.status !== 'estornada') : false })
+  const todayExpenses = (expenses || []).filter(e => { const d = toJSDate(e.date); return d ? (d >= today && e.status === 'pago') : false })
     const revenue = todaySales.reduce((sum, s) => sum + s.totalAmount, 0)
     const grossProfit = todaySales.reduce((sum, s) => sum + (s.profit || 0), 0)
     const totalExpenses = todayExpenses.reduce((sum, e) => sum + e.amount, 0)
@@ -27,7 +28,7 @@ const Dashboard = ({ sales = [], expenses = [], products = [], monthlyGoal = nul
   const bestSellers = useMemo(() => {
     const last7Days = new Date(); last7Days.setDate(last7Days.getDate() - 7)
     const startOfPeriod = new Date(last7Days); startOfPeriod.setHours(0,0,0,0)
-    const salesInPeriod = sales.filter(s => s.date.toDate() >= startOfPeriod && s.status !== 'estornada')
+  const salesInPeriod = (sales || []).filter(s => { const d = toJSDate(s.date); return d ? (d >= startOfPeriod && s.status !== 'estornada') : false })
     const itemsSold = {}
     salesInPeriod.forEach(sale => sale.items.forEach(item => { itemsSold[item.sku] = (itemsSold[item.sku] || 0) + item.quantity }))
     const allVariantsMap = new Map(allVariants.map(v => [v.sku, v]))

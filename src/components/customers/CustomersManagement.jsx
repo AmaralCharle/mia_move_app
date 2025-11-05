@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import CustomModal from '../ui/CustomModal'
 import { collection, addDoc, updateDoc, deleteDoc, doc, getDocs } from 'firebase/firestore'
+import { toJSDate } from '../../utils/dates'
 import { getUserCollectionPath } from '../../utils/paths'
 import { Timestamp } from 'firebase/firestore'
 
@@ -13,6 +14,7 @@ const CustomersManagement = ({ db, userId, customers = [], sales = [], showToast
   const [editingCustomer, setEditingCustomer] = useState(null)
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false)
   const [customerToDelete, setCustomerToDelete] = useState(null)
+  const [isDeleting, setIsDeleting] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
 
   const defaultForm = { name: '', phone: '', email: '', birthday: '', preferences: '', tags: '' }
@@ -64,14 +66,16 @@ const CustomersManagement = ({ db, userId, customers = [], sales = [], showToast
       return
     }
     try {
-      const colRef = collection(db, getUserCollectionPath(userId, 'customers'))
-      await deleteDoc(doc(colRef, customerToDelete.id))
+      setIsDeleting(true)
+      // build a proper document reference and delete
+      const docRef = doc(db, getUserCollectionPath(userId, 'customers'), customerToDelete.id)
+      await deleteDoc(docRef)
       showToast('Cliente excluída!', 'success')
     } catch (error) {
       console.error('Erro ao deletar cliente:', error)
       showToast('Erro ao excluir cliente.', 'error')
     } finally {
-      setIsDeleteModalOpen(false); setCustomerToDelete(null)
+      setIsDeleteModalOpen(false); setCustomerToDelete(null); setIsDeleting(false)
       if (view === 'profile' && selectedCustomer?.id === customerToDelete.id) { setView('list'); setSelectedCustomer(null) }
     }
   }
@@ -83,8 +87,8 @@ const CustomersManagement = ({ db, userId, customers = [], sales = [], showToast
     const [newNote, setNewNote] = useState('')
     const [expandedSale, setExpandedSale] = useState(null)
 
-    const customerSales = useMemo(() => (sales || []).filter(s => s.customerId === customer.id).sort((a,b)=>b.date?.seconds - a.date?.seconds), [sales, customer.id])
-    const customerStats = useMemo(() => { const totalSpent = customerSales.reduce((sum,s)=>sum + s.totalAmount, 0); const lastPurchase = customerSales.length>0 ? customerSales[0].date?.toDate() : null; return { totalSpent, lastPurchase } }, [customerSales])
+  const customerSales = useMemo(() => (sales || []).filter(s => s.customerId === customer.id).sort((a,b)=> (toJSDate(b.date)?.getTime() || 0) - (toJSDate(a.date)?.getTime() || 0) ), [sales, customer.id])
+  const customerStats = useMemo(() => { const totalSpent = customerSales.reduce((sum,s)=>sum + (s.totalAmount || s.finalTotal || 0), 0); const lastPurchase = customerSales.length>0 ? toJSDate(customerSales[0].date) : null; return { totalSpent, lastPurchase } }, [customerSales])
 
     useEffect(() => {
       // Load notes from Firestore (subcollection customers/{id}/notes)
@@ -124,7 +128,7 @@ const CustomersManagement = ({ db, userId, customers = [], sales = [], showToast
           </div>
           <div className="space-x-2">
             <button onClick={() => openModal(customer)} className="px-4 py-2 text-sm text-white font-semibold rounded-full bg-indigo-500">Editar</button>
-            <button onClick={() => confirmDelete(customer)} className="px-4 py-2 text-sm text-white font-semibold rounded-full bg-red-500">Excluir</button>
+            <button onClick={() => confirmDelete(customer)} disabled={isDeleting} className={`px-4 py-2 text-sm text-white font-semibold rounded-full ${isDeleting ? 'bg-red-300 cursor-not-allowed' : 'bg-red-500'}`}>Excluir</button>
           </div>
         </div>
 
@@ -156,7 +160,7 @@ const CustomersManagement = ({ db, userId, customers = [], sales = [], showToast
                   <div key={sale.id} className="p-4 rounded-lg border-l-4 bg-white dark:bg-gray-700/50 border-teal-500">
                     <div className="flex justify-between items-center">
                       <div>
-                        <p className="text-sm text-gray-500">{sale.date?.toDate ? sale.date.toDate().toLocaleString('pt-BR') : sale.date}</p>
+                        <p className="text-sm text-gray-500">{(toJSDate(sale.date) && toJSDate(sale.date).toLocaleString('pt-BR')) || sale.date}</p>
                         <p className="font-bold text-lg">{formatCurrency(sale.totalAmount)} - <span className="font-medium">{sale.paymentMethod}</span></p>
                       </div>
                       <div>
@@ -207,7 +211,8 @@ const CustomersManagement = ({ db, userId, customers = [], sales = [], showToast
                 <td className="px-6 py-4"><div className="flex flex-wrap gap-1">{(c.tags||[]).slice(0,3).map(tag => <span key={tag} className="px-2 py-1 text-xs font-semibold text-pink-800 bg-pink-100 rounded-full">{tag}</span>)}</div></td>
                 <td className="px-6 py-4 text-right text-sm font-medium">
                   <button onClick={() => openModal(c)} className="text-indigo-600 mr-4">Editar</button>
-                  <button onClick={() => { setSelectedCustomer(c); setView('profile') }} className="text-indigo-600">Ver Perfil</button>
+                  <button onClick={() => { setSelectedCustomer(c); setView('profile') }} className="text-indigo-600 mr-4">Ver Perfil</button>
+                  <button onClick={() => confirmDelete(c)} className="text-red-600">Excluir</button>
                 </td>
               </tr>
             ))}
@@ -232,7 +237,10 @@ const CustomersManagement = ({ db, userId, customers = [], sales = [], showToast
       </CustomModal>
 
       <CustomModal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)} title="Confirmar Exclusão" size="max-w-md"
-  actions={<><button onClick={() => setIsDeleteModalOpen(false)} className="px-4 py-2 bg-gray-200 text-gray-800 dark:bg-gray-600 dark:text-gray-200 rounded-full">Cancelar</button><button onClick={handleDelete} className="px-4 py-2 text-white rounded-full bg-red-500">Excluir</button></>}>
+  actions={<>
+    <button onClick={() => setIsDeleteModalOpen(false)} disabled={isDeleting} className={`px-4 py-2 bg-gray-200 text-gray-800 dark:bg-gray-600 dark:text-gray-200 rounded-full ${isDeleting ? 'opacity-60 cursor-not-allowed' : ''}`}>Cancelar</button>
+    <button onClick={handleDelete} disabled={isDeleting} className={`px-4 py-2 text-white rounded-full ${isDeleting ? 'bg-red-300 cursor-not-allowed' : 'bg-red-500'}`}>{isDeleting ? 'Excluindo...' : 'Excluir'}</button>
+  </>}>
         <p>Tem certeza que deseja excluir a cliente <strong>{customerToDelete?.name}</strong>?</p>
       </CustomModal>
     </div>

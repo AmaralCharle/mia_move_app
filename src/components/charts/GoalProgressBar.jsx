@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react'
 import { formatCurrency } from '../../utils/format'
+import { toJSDate } from '../../utils/dates'
 
 const GoalProgressBar = ({ sales, expenses, monthlyGoal, showTitle = false }) => {
   const { currentValue, progressPercentage, goalType, goalAmount } = useMemo(() => {
@@ -8,8 +9,8 @@ const GoalProgressBar = ({ sales, expenses, monthlyGoal, showTitle = false }) =>
     const now = new Date()
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
 
-    const monthSales = (sales || []).filter(s => s.date.toDate() >= startOfMonth && s.status !== 'estornada')
-    const monthExpenses = (expenses || []).filter(e => e.date.toDate() >= startOfMonth && e.status === 'pago')
+  const monthSales = (sales || []).filter(s => { const d = toJSDate(s.date); return d ? (d >= startOfMonth && s.status !== 'estornada') : false })
+  const monthExpenses = (expenses || []).filter(e => { const d = toJSDate(e.date); return d ? (d >= startOfMonth && e.status === 'pago') : false })
 
     let current = 0
     if (monthlyGoal.type === 'revenue') {

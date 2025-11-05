@@ -3,6 +3,7 @@ import CustomModal from '../ui/CustomModal'
 import { collection, addDoc, updateDoc, deleteDoc, doc, query, getDocs, where, Timestamp } from 'firebase/firestore'
 import { getUserCollectionPath } from '../../utils/paths'
 import { formatCurrency, getStartOfDay } from '../../utils/format'
+import { toJSDate } from '../../utils/dates'
 
 const primaryColor = 'bg-pink-500 hover:bg-pink-600'
 const dangerColor = 'bg-red-500 hover:bg-red-600'
@@ -14,7 +15,7 @@ const ExpenseCategoryChart = ({ expenses }) => {
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-    const expensesInMonth = (expenses || []).filter(e => e.date && e.date.toDate ? e.date.toDate() >= startOfMonth : false);
+  const expensesInMonth = (expenses || []).filter(e => { const d = toJSDate(e.date); return d ? d >= startOfMonth : false });
 
     const data = expensesInMonth.reduce((acc, expense) => {
       acc[expense.category] = (acc[expense.category] || 0) + expense.amount;
@@ -126,8 +127,8 @@ const ExpensesManagement = ({ db, userId, expenses = [], showToast = () => {}, r
 
   useEffect(() => {
     if (editingExpense) {
-      const expenseDate = editingExpense.date && editingExpense.date.toDate ? editingExpense.date.toDate().toISOString().split('T')[0] : editingExpense.date || new Date().toISOString().split('T')[0];
-      const expenseDueDate = editingExpense.dueDate && editingExpense.dueDate.toDate ? editingExpense.dueDate.toDate().toISOString().split('T')[0] : editingExpense.dueDate || '';
+  const expenseDate = (toJSDate(editingExpense.date) && toJSDate(editingExpense.date).toISOString().split('T')[0]) || editingExpense.date || new Date().toISOString().split('T')[0];
+  const expenseDueDate = (toJSDate(editingExpense.dueDate) && toJSDate(editingExpense.dueDate).toISOString().split('T')[0]) || editingExpense.dueDate || '';
       setFormData({ ...editingExpense, date: expenseDate, dueDate: expenseDueDate });
     }
   }, [editingExpense]);
@@ -189,14 +190,14 @@ const ExpensesManagement = ({ db, userId, expenses = [], showToast = () => {}, r
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {(expenses || []).map(exp => {
-                const isOverdue = exp.status === 'a_pagar' && exp.dueDate && exp.dueDate.toDate ? exp.dueDate.toDate() < getStartOfDay(new Date()) : false;
+                const isOverdue = exp.status === 'a_pagar' && toJSDate(exp.dueDate) ? toJSDate(exp.dueDate) < getStartOfDay(new Date()) : false;
                 return (
                   <tr key={exp.id} className={isOverdue ? 'bg-red-50' : ''}>
-                    <td className="px-3 py-4 text-sm">{exp.date && exp.date.toDate ? exp.date.toDate().toLocaleDateString('pt-BR') : exp.date}</td>
+                    <td className="px-3 py-4 text-sm">{(toJSDate(exp.date) && toJSDate(exp.date).toLocaleDateString('pt-BR')) || exp.date}</td>
                     <td className="px-3 py-4 text-sm font-medium">{exp.description}</td>
                     <td className="px-3 py-4 text-sm"><span className="px-2 inline-flex text-xs font-semibold rounded-full bg-pink-100 text-pink-800">{exp.category}</span></td>
                     <td className="px-3 py-4 text-sm font-semibold text-red-600">{formatCurrency(exp.amount)}</td>
-                    <td className="px-3 py-4 text-sm">{exp.status === 'pago' ? <span className="text-green-600 font-semibold">Pago</span> : <span className="text-yellow-600 font-semibold">A Pagar {exp.dueDate ? `em ${exp.dueDate.toDate().toLocaleDateString('pt-BR')}` : ''}</span>}</td>
+                    <td className="px-3 py-4 text-sm">{exp.status === 'pago' ? <span className="text-green-600 font-semibold">Pago</span> : <span className="text-yellow-600 font-semibold">A Pagar {toJSDate(exp.dueDate) ? `em ${toJSDate(exp.dueDate).toLocaleDateString('pt-BR')}` : ''}</span>}</td>
                     <td className="px-3 py-4 text-right text-sm space-x-2">
                       {exp.status === 'a_pagar' && <button onClick={() => handleMarkAsPaid(exp)} className="text-green-600">Pagar</button>}
                       <button onClick={() => { setEditingExpense(exp); setIsModalOpen(true); }} className="text-indigo-600">Editar</button>
