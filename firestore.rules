@@ -1,24 +1,27 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Permite que qualquer usuário autenticado crie seu próprio documento de perfil
-    match /users/{userId} {
-      allow create: if request.auth != null && request.auth.uid == userId;
-      allow read, update, delete: if request.auth != null && (
-        request.auth.uid == userId ||
-        // usuário com role == 'master' pode gerenciar todos
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'master'
+    // Função para verificar se o usuário autenticado é um dos UIDs de administrador.
+    // Adicione aqui os UIDs que devem ter acesso total ao app.
+    function isMasterAdmin() {
+      return request.auth != null && (
+        request.auth.uid == 'cnxflbD2BGMpc3CSIIZu5CQmSdW2' || // UID antigo de admin
+        request.auth.uid == 'aigcgUEpuTXJTht68Zzjzi9a8Pj1'   // seu UID atual (usemiamove@gmail.com)
       );
     }
 
-    // Coleções principais do app — somente master pode ler/escrever
+    // Permite leitura/escrita nas coleções usadas pela aplicação para o administrador.
     match /{collection=products|sales|customers|defectiveItems|expenses|goals|categories}/{docId} {
-      allow read, write: if request.auth != null &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'master';
+      allow read, write: if isMasterAdmin();
     }
 
-    // Fallback seguro (nega tudo)
-    match /{document=**} {
+    // Mantemos também a rota 'artifacts' caso você precise dela em paralelo.
+    match /artifacts/{appId}/{document=**} {
+      allow read, write: if isMasterAdmin();
+    }
+
+    // Fallback seguro (nega tudo nas demais coleções)
+    match /{path=**} {
       allow read, write: if false;
     }
   }
